@@ -355,7 +355,9 @@ def _resolve_runtime_agent_kwargs() -> dict:
     except Exception as exc:
         raise RuntimeError(format_runtime_provider_error(exc)) from exc
 
-    return {
+    config = _load_gateway_config()
+    max_tokens = _resolve_gateway_max_tokens(config)
+    kwargs = {
         "api_key": runtime.get("api_key"),
         "base_url": runtime.get("base_url"),
         "provider": runtime.get("provider"),
@@ -364,6 +366,9 @@ def _resolve_runtime_agent_kwargs() -> dict:
         "args": list(runtime.get("args") or []),
         "credential_pool": runtime.get("credential_pool"),
     }
+    if max_tokens is not None:
+        kwargs["max_tokens"] = max_tokens
+    return kwargs
 
 
 def _build_media_placeholder(event) -> str:
@@ -478,6 +483,31 @@ def _resolve_gateway_model(config: dict | None = None) -> str:
     elif isinstance(model_cfg, dict):
         return model_cfg.get("default") or model_cfg.get("model") or ""
     return ""
+
+
+def _resolve_gateway_max_tokens(config: dict | None = None) -> Optional[int]:
+    """Read model.max_tokens from config.yaml for gateway-created agents.
+
+    Codex LB is OpenAI-compatible, but omitting the output cap lets the
+    backend choose a small default. Long tool calls then end with
+    finish_reason=length before Hermes has a complete answer.
+    """
+    cfg = config if config is not None else _load_gateway_config()
+    model_cfg = cfg.get("model", {})
+    if not isinstance(model_cfg, dict):
+        return None
+    raw = model_cfg.get("max_tokens") or model_cfg.get("max_output_tokens")
+    if raw in (None, ""):
+        return None
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        logger.warning("Invalid model.max_tokens %r in config.yaml; ignoring", raw)
+        return None
+    if value <= 0:
+        logger.warning("Invalid model.max_tokens %r in config.yaml; ignoring", raw)
+        return None
+    return value
 
 
 def _resolve_hermes_bin() -> Optional[list[str]]:
