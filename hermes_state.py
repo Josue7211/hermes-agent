@@ -364,6 +364,7 @@ class SessionDB:
     ) -> str:
         """Create a new session record. Returns the session_id."""
         def _do(conn):
+            model_config_json = json.dumps(model_config) if model_config else None
             conn.execute(
                 """INSERT OR IGNORE INTO sessions (id, source, user_id, model, model_config,
                    system_prompt, parent_session_id, started_at)
@@ -373,11 +374,21 @@ class SessionDB:
                     source,
                     user_id,
                     model,
-                    json.dumps(model_config) if model_config else None,
+                    model_config_json,
                     system_prompt,
                     parent_session_id,
                     time.time(),
                 ),
+            )
+            conn.execute(
+                """UPDATE sessions SET
+                   user_id = COALESCE(user_id, ?),
+                   model = COALESCE(model, ?),
+                   model_config = COALESCE(model_config, ?),
+                   system_prompt = COALESCE(system_prompt, ?),
+                   parent_session_id = COALESCE(parent_session_id, ?)
+                   WHERE id = ?""",
+                (user_id, model, model_config_json, system_prompt, parent_session_id, session_id),
             )
         self._execute_write(_do)
         return session_id
@@ -517,6 +528,10 @@ class SessionDB:
                    (id, source, model, started_at)
                    VALUES (?, ?, ?, ?)""",
                 (session_id, source, model, time.time()),
+            )
+            conn.execute(
+                "UPDATE sessions SET model = COALESCE(model, ?) WHERE id = ?",
+                (model, session_id),
             )
         self._execute_write(_do)
 

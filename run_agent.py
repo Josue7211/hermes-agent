@@ -5859,8 +5859,22 @@ class AIAgent:
                                 "stream" in _err_lower
                                 and "not supported" in _err_lower
                             )
-                            if _is_stream_unsupported:
+                            _is_codex_lb_stream_dialect = (
+                                "expected to have received `response.created` before" in _err_lower
+                                and (
+                                    "codex." in _err_lower
+                                    or "response.function_call" in _err_lower
+                                    or "response.output" in _err_lower
+                                )
+                            )
+                            if _is_stream_unsupported or _is_codex_lb_stream_dialect:
                                 self._disable_streaming = True
+                                logger.warning(
+                                    "Streaming dialect unsupported for this endpoint; "
+                                    "retrying with non-streaming chat completions: %s",
+                                    e,
+                                )
+                            if _is_stream_unsupported:
                                 self._safe_print(
                                     "\n⚠  Streaming is not supported for this "
                                     "model/provider. Switching to non-streaming.\n"
@@ -8976,10 +8990,24 @@ class AIAgent:
                             self.thinking_callback("")
 
                     _use_streaming = True
+                    _base_url_lower = (self.base_url or "").lower()
+                    _model_lower = (self.model or "").lower()
+                    _is_codex_lb_chat_compat = (
+                        self.api_mode == "chat_completions"
+                        and self.provider == "custom"
+                        and ":2455" in _base_url_lower
+                        and _model_lower.startswith("gpt-5")
+                    )
+                    # Codex LB is OpenAI-compatible for non-streaming chat
+                    # completions, but its streaming feed can include
+                    # Responses-style events that the chat stream parser rejects
+                    # before any user-visible token is delivered.
+                    if _is_codex_lb_chat_compat:
+                        _use_streaming = False
                     # Provider signaled "stream not supported" on a previous
                     # attempt — switch to non-streaming for the rest of this
                     # session instead of re-failing every retry.
-                    if getattr(self, "_disable_streaming", False):
+                    elif getattr(self, "_disable_streaming", False):
                         _use_streaming = False
                     elif not self._has_stream_consumers():
                         # No display/TTS consumer. Still prefer streaming for
